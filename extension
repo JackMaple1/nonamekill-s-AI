@@ -1,0 +1,950 @@
+game.import("extension", function (lib, game, ui, get, ai, _status) {
+    return {
+        name: "AI决策",
+        editable: false,
+        content: function (config, pack) {
+            //谋孙尚香
+            lib.skill.sbjieyin = {
+                trigger: { player: 'phaseUseBegin' },
+                forced: true,
+                locked: false,
+                dutySkill: true,
+                group: ['sbjieyin_init', 'sbjieyin_fail'],
+                filter: function (event, player) {
+                    return game.hasPlayer(current => current.hasMark('sbjieyin_mark'));
+                },
+                content: function () {
+                    'step 0'
+                    var targets = game.filterPlayer(current => current.hasMark('sbjieyin_mark'));
+                    event.targets = targets;
+                    'step 1'
+                    var target = targets.shift();
+                    event.target = target;
+                    var str = target.hasSkill('sbjieyin_marked') ? '移去' : '移动或移去';
+                    var num = Math.min(2, Math.max(1, target.countCards('h')));
+                    target.chooseCard('交给' + get.translation(player) + get.cnNumber(num) + '张手牌，然后获得1点护甲；或令其' + str + '你的所有“助”标记', num).set('ai', card => {
+                        if (_status.event.goon) return 100 - get.value(card);
+                        return 0;
+                    }).set('goon', get.attitude(target, player) > 1);
+                    'step 2'
+                    if (result.bool) {
+                        target.give(result.cards, player);
+                        target.changeHujia(1, null, true);
+                        event.goto(4);
+                    } else {
+                        if (!game.hasPlayer(current => current != player && current != target) || target.hasSkill('sbjieyin_marked')) event._result = { bool: false };
+                        else player.chooseTarget('结姻：是否移动' + get.translation(target) + '的“助”？', (card, player, target) => {
+                            return target != player && target != _status.event.getParent().target;
+                        }).set('ai', target => get.attitude(_status.event.player, target) - 1);
+                        target.addSkill('sbjieyin_marked');
+                    }
+                    'step 3'
+                    if (result.bool) {
+                        var targetx = result.targets[0];
+                        var num = target.countMark('sbjieyin_mark');
+                        target.removeSkill('sbjieyin_mark');
+                        targetx.addSkill('sbjieyin_mark');
+                        targetx.addMark('sbjieyin_mark', num, false);
+                        player.line2([target, targetx], 'green');
+                        game.log(player, '将', target, '的' + get.cnNumber(num) + '枚“助”移动至', targetx);
+                    } else {
+                        target.removeSkill('sbjieyin_mark');
+                        game.log(player, '移去了', target, '的' + get.cnNumber(num) + '枚“助”');
+                        game.createEvent('sbjieyin_fail').setContent(lib.skill.sbjieyin_fail.content).player = player;
+                    }
+                    'step 4'
+                    if (targets.length) event.goto(1);
+                },
+                subSkill: {
+                    fail: {
+                        audio: 'sbjieyin',
+                        trigger: { global: 'dieAfter' },
+                        dutySkill: true,
+                        forced: true,
+                        locked: false,
+                        direct: true,
+                        filter: function (event, player) {
+                            return event.player.hasMark('sbjieyin_mark');
+                        },
+                        content: function () {
+                            player.logSkill('sbjieyin_fail');
+                            player.awakenSkill('sbjieyin');
+                            game.log(player, '使命失败');
+
+                            player.loseMaxHp();
+                            player.removeSkill('sbliangzhu'); // 失去 sbliangzhu
+
+                            if (!player.hasSkill('sbxiaoji')) { // 只有失败时才获得 sbxiaoji
+                                player.addSkill('sbxiaoji');
+                            }
+                        }
+                    },
+                    mark: {
+                        charlotte: true,
+                        mark: true,
+                        marktext: '助',
+                        onremove: true,
+                        intro: {
+                            name: '结姻(助)',
+                            name2: '助',
+                            content: 'mark'
+                        }
+                    },
+                    marked: { charlotte: true },
+                    init: {
+                        audio: 'sbjieyin',
+                        trigger: {
+                            global: 'phaseBefore',
+                            player: 'enterGame',
+                        },
+                        forced: true,
+                        locked: false,
+                        direct: true,
+                        dutySkill: true,
+                        filter: function (event, player) {
+                            return game.hasPlayer(current => current != player) && (event.name != 'phase' || game.phaseNumber == 0);
+                        },
+                        content: function () {
+                            'step 0'
+                            player.chooseTarget('结姻：令一名其他角色获得1枚“助”', lib.filter.notMe, true).set('ai', target => get.attitude(_status.event.player, target));
+                            'step 1'
+                            if (result.bool) {
+                                var target = result.targets[0];
+                                player.logSkill('sbjieyin_init', target);
+                                target.addSkill('sbjieyin_mark');
+                                target.addMark('sbjieyin_mark', 1);
+                            }
+                            'step 2'
+                            game.delayx();
+                        }
+                    },
+                }
+            };
+            lib.skill.sbxiaoji = {
+                audio: 2,
+                trigger: {
+                    player: 'loseAfter',
+                    global: ['equipAfter', 'addJudgeAfter', 'gainAfter', 'loseAsyncAfter', 'addToExpansionAfter'],
+                },
+                forced: true,
+                locked: false,
+                groupSkill: true,
+                filter: function (event, player) {
+                    var evt = event.getl(player);
+                    return evt && evt.player == player && evt.es && evt.es.length > 0;
+                },
+                content: function () {
+                    'step 0'
+                    event.count = trigger.getl(player).es.length;
+                    'step 1'
+                    event.count--;
+                    player.draw(2);
+                    player.chooseTarget('是否弃置场上的一张牌？', (card, player, target) => {
+                        return target.countDiscardableCards(player, 'ej');
+                    }).set('ai', target => {
+                        var player = _status.event.player;
+                        var att = get.attitude(player, target);
+                        if (att > 0 && (target.countCards('j') > 0 || target.countCards('e', function (card) {
+                            return get.value(card, target) < 0;
+                        }))) return 2;
+                        if (att < 0 && target.countCards('e') > 0 && !target.hasSkillTag('noe')) return -1;
+                        return 0;
+                    });
+                    'step 2'
+                    if (result.bool) {
+                        player.discardPlayerCard(result.targets[0], 'ej', true);
+                    }
+                    'step 3'
+                    if (event.count > 0) {
+                        player.logSkill('sbxiaoji');
+                        event.goto(1);
+                    }
+                },
+                ai: {
+                    noe: true,
+                    reverseEquip: true,
+                    effect: {
+                        target: function (card, player, target, current) {
+                            if (get.type(card) == 'equip' && !get.cardtag(card, 'gifts')) return [1, 3];
+                        }
+                    }
+                },
+            };
+            lib.skill.sbliangzhu = {
+                audio: 2,
+                enable: 'phaseUse',
+                usable: 1,
+                groupSkill: true,
+                filter: function (event, player) {
+                    return game.hasPlayer(current => current != player && current.countCards('e'));
+                },
+                filterTarget: function (card, player, target) {
+                    return target.countCards('e') && target != player;
+                },
+                content: function () {
+                    'step 0'
+                    player.choosePlayerCard(target, 'e', true);
+                    'step 1'
+                    if (result.bool) {
+                        player.addToExpansion(result.cards, target, 'give').gaintag.add('sbliangzhu');
+                    }
+                },
+            };
+
+
+
+
+            //正常的神郭嘉
+            lib.skill.stianyi = {
+                audio: 2,
+                trigger: { player: 'phaseZhunbeiBegin' },
+                forced: true,
+                juexingji: true,
+                skillAnimation: true,
+                animationColor: 'thunder',
+                filter: function (event, player) {
+                    return !game.hasPlayer(function (current) {
+                        return current.getAllHistory('damage').length == 0;
+                    });
+                },
+                content: function () {
+                    'step 0'
+                    player.awakenSkill('stianyi');
+                    player.gainMaxHp(2);
+                    player.recover();
+                    'step 1'
+                    player.chooseTarget(true, '令一名角色获得技能〖佐幸〗').set('ai', function (target) {
+                        return get.attitude(_status.event.player, target);
+                    });
+                    'step 2'
+                    if (result.bool) {
+                        var target = result.targets[0];
+                        player.line(target, 'green');
+                        target.storage.zuoxing = player;
+                        target.addSkill('zuoxing');
+                    }
+                },
+                derivation: 'zuoxing',
+            };
+
+
+            //鲍信调整为和手杀同步
+            lib.skill.twyimou = {
+                audio: 2,
+                trigger: { global: 'damageEnd' },
+                filter: function (event, player) {
+                    return event.player.isIn() && get.distance(player, event.player) <= 1;
+                },
+                logTarget: 'player',
+                check: function (event, player) {
+                    return get.attitude(player, event.player) > 0;
+                },
+                content: function () {
+                    'step 0'
+                    var target = get.translation(trigger.player);
+                    var choiceList = [
+                        '令' + target + '获得牌堆里的一张【杀】',
+                        '令' + target + '将一张牌交给另一名角色，然后' + target + '摸1张牌'
+                    ];
+                    var list = ['选项一'];
+                    if (trigger.player.countCards('h')) list.push('选项二');
+                    else choiceList[1] = '<span style="opacity:0.5">' + choiceList[1] + '</span>';
+                    player.chooseControl(list).set('prompt', '毅谋：请选择一项').set('choiceList', choiceList).set('ai', function () {
+                        var evt = _status.event.getTrigger(), list = _status.event.list;
+                        var player = _status.event.player;
+                        var target = evt.player;
+                        if (target.countCards('h') && list.contains('选项二')) return '选项二';
+                        return '选项一';
+                    }).set('list', list);
+                    'step 1'
+                    event.choice = result.control;
+                    'step 2'
+                    if (event.choice == '选项一') {
+                        var card = get.cardPile2(function (card) {
+                            return card.name == 'sha';
+                        });
+                        if (card) trigger.player.gain(card, 'gain2');
+                        else game.log('但牌堆里已经没有', '#y杀', '了！');
+                        event.finish();
+                    }
+                    'step 3'
+                    if (event.choice == '选项二') {
+                        if (trigger.player.countCards('h')) {
+                            trigger.player.chooseCardTarget({
+                                prompt: '将一张手牌交给另一名其他角色并摸1张牌',
+                                filterCard: true,
+                                forced: true,
+                                filterTarget: lib.filter.notMe,
+                                ai1: function (card) {
+                                    return 1 / Math.max(0.1, get.value(card));
+                                },
+                                ai2: function (target) {
+                                    var player = _status.event.player, att = get.attitude(player, target);
+                                    if (target.hasSkillTag('nogain')) att /= 9;
+                                    return 4 + att;
+                                },
+                            });
+                        } else event.finish();
+                    }
+                    'step 4'
+                    var target = result.targets[0];
+                    trigger.player.line(target);
+                    trigger.player.give(result.cards, target);
+                    trigger.player.draw(1);  // 修改为摸1张牌
+                },
+                ai: { expose: 0.3 },
+            };
+            lib.translate.twyimou_info =
+                "当一名角色受到伤害后，若其存活且你至其的距离不大于1，你可以选择一项：" +
+                "1. 令其从牌堆中获得一张【杀】；" +
+                "2. 令其将一张手牌交给另一名角色并摸1张牌。";
+
+            
+            //傅佥技能效果修改
+            lib.skill.jueyong = {
+                audio: 2,
+                trigger: { target: 'useCardToTarget' },
+                forced: true,
+                filter: function (event, player) {
+                    return event.card.name != 'jiu' && event.card.name != 'tao' &&
+                        event.targets.length == 1 && event.card.isCard && event.cards.length == 1 && event.getParent(2).name != 'jueyong_timeout' &&
+                        get.position(event.cards[0], true) == 'o' && event.card.name == event.cards[0].name &&
+                        (!player.storage.jueyong || player.storage.jueyong[0].length < player.hp); // 修改这里：绝的数量小于体力值
+                },
+                content: function () {
+                    trigger.targets.remove(player);
+                    trigger.getParent().triggeredTargets2.remove(player);
+                    trigger.untrigger();
+                    var card = trigger.cards[0];
+                    player.addToExpansion(card, 'gain2').gaintag.add('jueyong');
+                    if (!player.storage.jueyong) player.storage.jueyong = [[], []];
+                    player.storage.jueyong[0].push(card);
+                    player.storage.jueyong[1].push(trigger.player);
+                    game.delayx();
+                },
+                onremove: function (player, skill) {
+                    var cards = player.getExpansions(skill);
+                    if (cards.length) player.loseToDiscardpile(cards);
+                    delete player.storage[skill];
+                },
+                intro: {
+                    markcount: function (storage) {
+                        if (!storage) return 0;
+                        return storage[0].length;
+                    },
+                    mark: function (dialog, storage, player) {
+                        if (!storage) return;
+                        dialog.addAuto(storage[0]);
+                        dialog.addText(get.translation(storage[1]));
+                    },
+                    onunmark: function (storage, player) {
+                        player.storage.jueyong = [[], []];
+                    },
+                },
+                ai: {
+                    reverseEquip: true,
+                    effect: {
+                        target: function (card, player, target, current) {
+                            if (get.type(card) == 'equip' && !get.tag(card, 'gifts') && target.storage.jueyong && target.storage.jueyong[1].length) {
+                                var result1 = get.equipResult(player, target, card.name), subtype = get.subtype(card);
+                                for (var i of target.storage.jueyong[0]) {
+                                    if (get.subtype(i, false) == subtype && get.equipResult(target, target, i.name) >= result1) return 'zerotarget';
+                                }
+                            }
+                        },
+                    },
+                },
+                group: 'jueyong_timeout',
+                subSkill: {
+                    timeout: {
+                        audio: 'jueyong',
+                        trigger: { player: 'phaseJieshuBegin' },
+                        forced: true,
+                        filter: function (event, player) {
+                            return player.storage.jueyong && player.storage.jueyong[0].length > 0;
+                        },
+                        content: function () {
+                            var list = player.storage.jueyong, card = list[0].shift(), source = list[1].shift();
+                            if (player.getExpansions('jueyong').contains(card)) {
+                                if (source && source.isIn() && source.canUse(card, player, false)) source.useCard(card, player, false);
+                                else player.loseToDiscardpile(card);
+                            }
+                            if (list[0].length) event.redo();
+                        },
+                    },
+                },
+            };
+            //jueyong描述修改
+            lib.translate.jueyong = "绝勇";
+            lib.translate.jueyong_info =
+                "锁定技，①当你不因〖绝勇〗成为唯一牌的目标时，若此牌不为转化牌且对应的实体牌牌数为1且不为【桃】或【酒】且你的“绝”数小于你的体力值，则你将此牌置于你的武将牌上，称为“绝”，且取消此牌的目标。" +
+                "②结束阶段开始时，若你有“绝”，则你令所有“绝”的原使用者依次对你使用所有“绝”，将无法使用的“绝”置入弃牌堆。";
+
+            // 优化弃牌逻辑
+            var originalDiscardCards = ai.get.discardCards;
+            ai.get.discardCards = function (player, count, options) {
+                if (isBloodSellingGeneral(player) && player.identity === 'fan') {
+                    var cards = player.getCards('h');
+                    var shanCards = cards.filter(card => card.name === 'shan');
+                    if (shanCards.length > 0) {
+                        return shanCards.slice(0, count);
+                    }
+                }
+                return originalDiscardCards.apply(this, arguments);
+            };
+            //谋刘赪优化
+            lib.skill.splveying = {
+                audio: 2,
+                trigger: { player: 'useCardAfter' },
+                forced: true,
+                filter: function (event, player) {
+                    return event.card.name == 'sha' && player.countMark('splveying') > 1;
+                },
+                content: function () {
+                    'step 0'
+                    player.removeMark('splveying', 2);
+                    player.draw(); // 移除标记并摸一张牌
+                    'step 1'
+                    player.chooseUseTarget('guohe'); // 强制使用【过河拆桥】
+                },
+                marktext: '椎',
+                intro: {
+                    name: '椎(掠影/莺舞)',
+                    name2: '椎',
+                    content: 'mark',
+                },
+                group: 'splveying_add',
+                subSkill: {
+                    add: {
+                        trigger: { player: 'useCardToPlayered' },
+                        forced: true,
+                        usable: 2,
+                        filter: function (event, player) {
+                            return event.card.name == 'sha' && player.isPhaseUsing();
+                        },
+                        content: function () {
+                            player.addMark('splveying', 1); // 使用【杀】时增加标记
+                        },
+                    },
+                },
+                ai: {
+                    // 增加对【杀】的重视程度，确保 AI 优先使用【杀】
+                    useCardPriority: function (card, player) {
+                        if (card.name == 'sha' && player.hasSkill('splveying')) {
+                            return 20; // 提升【杀】的优先级
+                        }
+                        return 0;
+                    },
+                    useCardValue: function (card, player) {
+                        if (card.name == 'sha' && player.hasSkill('splveying')) {
+                            return 10; // 增加【杀】的价值
+                        }
+                        return 0;
+                    }
+                }
+            };
+
+
+            //司马师优化
+            lib.skill.baiyi = {
+                enable: 'phaseUse',
+                usable: 1,
+                filterTarget: lib.filter.notMe,
+                selectTarget: 2,
+                limited: true,
+                skillAnimation: true,
+                filter: function (event, player) {
+                    return player.isDamaged() && game.players.length > 2;
+                },
+                multitarget: true,
+                multiline: true,
+                changeSeat: true,
+                //contentBefore: function () {
+                //    player.$fullscreenpop('败移', 'thunder');
+                //},
+                content: function () {
+                    player.awakenSkill('baiyi');
+                    game.broadcastAll(function (target1, target2) {
+                        game.swapSeat(target1, target2);
+                    }, targets[0], targets[1]);
+                },
+                ai: {
+                    order: 10, // 提高baiyi技能的优先级
+                    result: {
+                        target: function (player, target) {
+                            if (player.hasUnknown() && target != player.next && target != player.previous) return 0;
+                            var distance = Math.pow(get.distance(player, target, 'absolute'), 2);
+                            if (!ui.selected.targets.length) return distance;
+                            var distance2 = Math.pow(get.distance(player, ui.selected.targets[0], 'absolute'), 2);
+                            return Math.min(0, distance - distance2);
+                        }
+                    },
+                    // 在技能AI中调整【桃】和【桃园结义】的优先级和重视程度
+                    useCardPriority: function (card, player) {
+                        if (card.name == 'tao') {
+                            return -2; // 降低【桃】的优先级
+                        }
+                        if (card.name == 'taoyuan') {
+                            return -2; // 降低【桃园结义】的优先级
+                        }
+                        return 0; // 其他卡牌保持默认优先级
+                    },
+                    useCardValue: function (card, player) {
+                        if (card.name == 'tao') {
+                            return -1.5; // 降低【桃】的重视程度
+                        }
+                        if (card.name == 'taoyuan') {
+                            return -1.5; // 降低【桃园结义】的重视程度
+                        }
+                        return 0; // 其他卡牌保持默认价值
+                    },
+                },
+            };
+
+
+
+
+            lib.skill.yingba = {
+                audio: 2,
+                enable: 'phaseUse',
+                usable: 1,
+                filter: (event, player) => (game.hasPlayer((current) => (current != player && current.maxHp > 1))),
+                filterTarget: (card, player, target) => (target != player && target.maxHp > 1),
+                content: function () {
+                    'step 0'
+                    target.loseMaxHp();
+                    'step 1'
+                    if (target.isIn()) target.addMark('yingba_mark', 1);
+                    player.loseMaxHp();
+                },
+                locked: false,
+                mod: {
+                    targetInRange: function (card, player, target) {
+                        if (target.hasMark('yingba_mark')) return true;
+                    },
+                },
+                ai: {
+                    combo: 'scfuhai',
+                    threaten: 3,
+                    order: 9, // 默认情况下优先使用【yingba】，再使用【杀】
+                    result: {
+                        player: function (player, target) {
+                            if (player.maxHp == 1) return -2.5;
+                            return -0.25;
+                        },
+                        target: function (player, target) {
+                            if (target.isHealthy()) return -2;
+                            if (!target.hasMark('yingba_mark')) return -1;
+                            return -0.2;
+                        },
+                    },
+                    // AI 在出牌阶段开始时的策略优化
+                    phaseBegin_ai: function (player) {
+                        // 获取态度最差且威胁度最大的敌人
+                        var target = game.findPlayer(function (current) {
+                            return get.attitude(player, current) < 0 && get.threaten(current) > 2;
+                        });
+                        // 如果找到了符合条件的敌人且目标是满血且血量大于1
+                        if (target && target.hp == target.maxHp && target.hp > 1) {
+                            // 强制发动【yingba】技能
+                            if (player.canUse({ name: 'yingba' }, target)) {
+                                player.useCard({ name: 'yingba' }, target);
+                                return true; // AI 优先使用【yingba】技能
+                            }
+                        }
+                        return false;
+                    },
+                    // 降低【杀】的优先级，确保 AI 更倾向于先使用【yingba】
+                    orderAdjust: function (card, player, target) {
+                        if (card.name == 'sha' && player.hasSkill('yingba')) {
+                            return -6; // 降低【杀】的优先级
+                        }
+                        else if (card.name == 'guohe' && player.hasSkill('yingba')) {
+                            return -6; 
+                        }
+                        return 0; // 其他牌保持不变
+                    },
+                    // 这里调整对【桃】和【桃园结义】的优先级和重视程度（仅当拥有pinghe时）
+                    useCardPriority: function (card, player) {
+                        if (player.hasSkill('pinghe')) {
+                            if (card.name == 'tao') {
+                                return -10; // 降低【桃】的优先级
+                            }
+                            if (card.name == 'taoyuan') {
+                                return -10; // 降低【桃园结义】的优先级
+                            }
+                        }
+                        return 0;
+                    },
+                    useCardValue: function (card, player) {
+                        if (player.hasSkill('pinghe')) {
+                            if (card.name == 'tao') {
+                                return -2; // 降低【桃】的重视程度
+                            }
+                            if (card.name == 'taoyuan') {
+                                return -2; // 降低【桃园结义】的重视程度
+                            }
+                        }
+                        return 0;
+                    },
+                },
+                subSkill: {
+                    mark: {
+                        marktext: '定',
+                        intro: {
+                            name: '平定',
+                            content: 'mark',
+                            onunmark: true,
+                        },
+                        mod: {
+                            maxHandcard: function (player, numx) {
+                                var num = player.countMark('yingba_mark');
+                                if (num) return numx + num * game.countPlayer(function (current) {
+                                    return current.hasSkill('yingba');
+                                });
+                            },
+                        },
+                    },
+                },
+            };
+
+
+
+            // 大宝AI优化
+            lib.skill.repojun = {
+                shaRelated: true,
+                audio: 2,
+                trigger: { player: 'useCardToPlayered' },
+                direct: true,
+                filter: function (event, player) {
+                    return event.card.name == 'sha' && event.target.hp > 0 && event.target.countCards('he') > 0;
+                },
+                content: function () {
+                    'step 0'
+                    var next = player.choosePlayerCard(trigger.target, 'he', [1, Math.min(trigger.target.hp, trigger.target.countCards('he'))], get.prompt('repojun', trigger.target));
+                    next.set('ai', function (button) {
+                        if (!_status.event.goon) return 0;
+                        var val = get.value(button.link);
+                        if (button.link == _status.event.target.getEquip(2)) return 2 * (val + 3);
+                        return val;
+                    });
+                    next.set('goon', get.attitude(player, trigger.target) <= 0);
+                    next.set('forceAuto', true);
+                    'step 1'
+                    if (result.bool) {
+                        var target = trigger.target;
+                        player.logSkill('repojun', target);
+                        target.addSkill('repojun2');
+                        target.addToExpansion('giveAuto', result.cards, target).gaintag.add('repojun2');
+                    }
+                },
+                ai: {
+                    unequip_ai: true,
+                    directHit_ai: true,
+                    skillTagFilter: function (player, tag, arg) {
+                        if (get.attitude(player, arg.target) > 0) return false;
+                        if (tag == 'directHit_ai') return arg.target.hp >= Math.max(1, arg.target.countCards('h') - 1);
+                        if (arg && arg.name == 'sha' && arg.target.getEquip(2)) return true;
+                        return false;
+                    },
+                    order: function (card, player) {
+                        if (player.hasSkill('repojun') && card.name == 'sha') {
+                            return 17; // 提高【杀】的优先级
+                        }
+                        return get.order(card); // 其余牌保持默认
+                    },
+                    value: function (card, player) {
+                        if (player.hasSkill('repojun') && card.name == 'sha') {
+                            return get.value(card) + 2; // 提高【杀】的价值
+                        }
+                        return get.value(card); // 其余牌保持默认
+                    },
+                },
+                group: 'repojun3',
+            };
+
+            lib.skill.repojun3 = {
+                audio: 'repojun',
+                trigger: { source: 'damageBegin1' },
+                forced: true,
+                locked: false,
+                logTarget: 'player',
+                filter: function (event, player) {
+                    var target = event.player;
+                    return event.getParent().name == 'sha' && player.countCards('h') >= target.countCards('h') && player.countCards('e') >= target.countCards('e');
+                },
+                content: function () {
+                    trigger.num++;
+                },
+            };
+
+            lib.skill.repojun2 = {
+                trigger: { global: 'phaseEnd' },
+                forced: true,
+                popup: false,
+                charlotte: true,
+                filter: function (event, player) {
+                    return player.getExpansions('repojun2').length > 0;
+                },
+                content: function () {
+                    'step 0'
+                    var cards = player.getExpansions('repojun2');
+                    player.gain(cards, 'draw');
+                    game.log(player, '收回了' + get.cnNumber(cards.length) + '张“破军”牌');
+                    'step 1'
+                    player.removeSkill('repojun2');
+                },
+                intro: {
+                    markcount: 'expansion',
+                    mark: function (dialog, storage, player) {
+                        var cards = player.getExpansions('repojun2');
+                        if (player.isUnderControl(true)) dialog.addAuto(cards);
+                        else return '共有' + get.cnNumber(cards.length) + '张牌';
+                    },
+                },
+            };
+
+            // 谋关羽武圣逻辑
+            lib.skill.sbwusheng = {
+                audio: 2,
+                enable: ["chooseToRespond", "chooseToUse"],
+                init: function (player) {
+                    player.storage.sbwusheng;
+                },
+                filter: function (event, player) {
+                    return event.type != 'wuxie' && event.type != 'respondShan' && player.countCards('h') > 0;
+                },
+                chooseButton: {
+                    dialog: function (event, player) {
+                        var list = [];
+                        for (var i = 0; i < lib.inpile.length; i++) {
+                            var name = lib.inpile[i];
+                            if (name == 'sha') {
+                                list.push(['基本', '', 'sha']);
+                                for (var j of lib.inpile_nature) list.push(['基本', '', 'sha', j]);
+                            }
+                        }
+                        return ui.create.dialog('武圣', [list, 'vcard']);
+                    },
+                    filter: function (button, player) {
+                        return _status.event.getParent().filterCard({ name: button.link[2] }, player, _status.event.getParent());
+                    },
+                    check: function (button) {
+                        var player = _status.event.player;
+                        if (player.countCards('h', button.link[2]) > 0) return 0;
+                        var effect = player.getUseValue(button.link[2]);
+                        if (effect > 0) return effect;
+                        return 0;
+                    },
+                    backup: function (links, player) {
+                        return {
+                            filterCard: true,
+                            audio: 'sbwusheng',
+                            selectCard: 1,
+                            popname: true,
+                            check: function (card) {
+                                return 7 - get.value(card);
+                            },
+                            position: 'h',
+                            viewAs: { name: links[0][2], nature: links[0][3] },
+                        }
+                    },
+                    prompt: function (links, player) {
+                        return '将一张牌当做' + (get.translation(links[0][3]) || '') + get.translation(links[0][2]) + '使用';
+                    },
+                },
+                group: 'sbwusheng_shabi',
+                subSkill: {
+                    shabi: {
+                        trigger: { player: 'phaseUseBegin' },
+                        direct: true,
+                        content: function () {
+                            'step 0'
+                            player.chooseTarget('武圣：请选择一名非主公角色', '本阶段你可以对其使用至多三张【杀】且无距离限制', false, function (card, player, target) {
+                                return target != player;
+                            }).set('ai', function (target) {
+                                var att = get.attitude(_status.event.player, target);
+                                if (att < 0) return -att + 10;
+                                if (att == 0) return Math.random();
+                                return att;
+                            });
+                            'step 1'
+                            if (result.bool) {
+                                var target = result.targets[0];
+                                player.logSkill('sbwusheng', target);
+                                player.storage.sbwusheng = target;
+                                player.addTempSkill('sbwusheng_shabi2', 'phaseUseEnd');
+                                dcdAnim.loadSpine(xixiguagua.SS_gyskill.name, "skel", function () {
+                                    dcdAnim.playSpine(xixiguagua.SS_gyskill, { speed: 1, scale: 0.8 });
+                                    game.playAudio('../extension/标记补充/audio/effect_mouguanyu_wusheng.mp3');
+                                });
+
+                                // 添加AI操作逻辑
+                                if (player.isAI()) {
+                                    var handCards = player.getCards('h');
+                                    var hasShanOrEquip = handCards.some(card => card.name === 'shan' || get.type(card) === 'equip');
+                                    if (hasShanOrEquip) {
+                                        var cardToUse = handCards.find(card => card.name === 'shan' || get.type(card) === 'equip');
+                                        if (cardToUse) {
+                                            player.chooseUseTarget({
+                                                name: 'sha',
+                                                nature: 'fire',
+                                                cards: [cardToUse]
+                                            }, false, player.storage.sbwusheng);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    shabi2: {
+                        charlotte: true,
+                        mod: {
+                            targetInRange: function (card, player, target) {
+                                if (target == player.storage.sbwusheng) return true;
+                            },
+                            cardUsableTarget: function (card, player, target) {
+                                if (player.getHistory('useCard', function (e) {
+                                    return e.targets.contains(target) && e.card.name == 'sha';
+                                }).length < 3 && card.name == 'sha' && target == player.storage.sbwusheng) return true;
+                            },
+                        },
+                        trigger: { player: "useCardToBegin" },
+                        audio: "sbwusheng",
+                        shaRelated: true,
+                        direct: true,
+                        filter: function (event, player) {
+                            return event.card.name == 'sha' && event.target == player.storage.sbwusheng;
+                        },
+                        content: function () {
+                            player.draw();
+                        }
+                    }
+                },
+                ai: {
+                    order: 8,
+                    result: {
+                        player: 1.2,
+                    },
+                    threaten: 1.6,
+                },
+            };
+            // 神甘宁“劫营”逻辑
+            lib.skill.drlt_jieying = {
+                audio: 2,
+                locked: false,
+                global: 'drlt_jieying_mark',
+                group: ["drlt_jieying_1", "drlt_jieying_2", "drlt_jieying_3"],
+                subSkill: {
+                    '1': {
+                        audio: 'drlt_jieying',
+                        trigger: { player: 'phaseBegin' },
+                        forced: true,
+                        filter: function (event, player) {
+                            return !game.hasPlayer(function (current) {
+                                return current.hasMark('drlt_jieying_mark');
+                            });
+                        },
+                        content: function () {
+                            player.addMark('drlt_jieying_mark', 1);
+                        },
+                    },
+                    '2': {
+                        audio: 'drlt_jieying',
+                        trigger: { player: "phaseJieshuBegin" },
+                        direct: true,
+                        filter: function (event, player) {
+                            if (!player.hasMark('drlt_jieying_mark')) return false;
+                            if (player != game.me) { // 仅针对AI的限制
+                                var allies = game.filterPlayer(function (current) {
+                                    return get.attitude(player, current) > 0 && current != player;
+                                });
+                                var enemies = game.filterPlayer(function (current) {
+                                    return get.attitude(player, current) < 0;
+                                });
+                                // 如果没有队友，并且所有敌人手牌都小于3且没有负面效果（如乐不思蜀），则不发动技能
+                                if (allies.length === 0 && enemies.every(function (enemy) {
+                                    return enemy.countCards('h') < 3 && !enemy.countCards('j', { name: 'lebu' });
+                                })) {
+                                    return false;
+                                }
+                            }
+                            return true;
+                        },
+                        content: function () {
+                            'step 0'
+                            player.chooseTarget(get.prompt('drlt_jieying'),
+                                "将“营”交给一名角色；其摸牌阶段多摸一张牌，出牌阶段使用【杀】的次数上限+1且手牌上限+1。该角色回合结束后，其移去“营”标记，然后你获得其所有手牌。",
+                                function (card, player, target) {
+                                    // 仅针对AI玩家：如果目标有飞扬技能，处于乐不思蜀状态，且手牌数小于5，有80%的概率不发动技能
+                                    if (player != game.me) {
+                                        if (target.hasSkill('feiyang') && target.countCards('j', { name: 'lebu' }) && target.countCards('h') < 5) {
+                                            return Math.random() > 0.8;  // 80% 概率不对该目标发动技能
+                                        }
+                                        // 对队友且被乐不思蜀的角色有70%的概率不发动技能
+                                        if (target != player && get.attitude(player, target) > 0 && target.countCards('j', { name: 'lebu' })) {
+                                            return Math.random() > 0.7;
+                                        }
+                                    }
+                                    return target != player;
+                                }).ai = function (target) {
+                                    if (get.attitude(player, target) > 0)
+                                        return 1.5; // 原本0.1
+                                    if (target.isTurnedOver())
+                                        return false;
+                                    if (get.attitude(player, target) < 1 && (target.isTurnedOver() || target.countCards('h') < 1))
+                                        return 0.1; // 原本0.2
+                                    if (get.attitude(player, target) < 1 && target.countCards('h') > 0 && target.countCards('j', { name: 'lebu' }) > 0)
+                                        return target.countCards('h') * 0.8 + target.getHandcardLimit() * 0.7 + 2;
+                                    if (get.attitude(player, target) < 1 && target.countCards('h') > 0)
+                                        return target.countCards('h') * 0.4 + target.getHandcardLimit() * 0.3; // 原本0.8,0.7
+                                    return 1;
+                                };
+                            'step 1'
+                            if (result.bool) {
+                                var target = result.targets[0];
+                                player.line(target);
+                                player.logSkill('drlt_jieying', target);
+                                var mark = player.countMark('drlt_jieying_mark');
+                                player.removeMark('drlt_jieying_mark', mark);
+                                target.addMark('drlt_jieying_mark', mark);
+                            }
+                        },
+                    },
+                    '3': {
+                        audio: 'drlt_jieying',
+                        trigger: { global: 'phaseEnd' },
+                        forced: true,
+                        filter: function (event, player) {
+                            return player != event.player && event.player.hasMark('drlt_jieying_mark') && event.player.isIn();
+                        },
+                        logTarget: 'player',
+                        content: function () {
+                            if (trigger.player.countCards('h') > 0) {
+                                trigger.player.give(trigger.player.getCards('h'), player);
+                            }
+                            trigger.player.removeMark('drlt_jieying_mark', trigger.player.countMark('drlt_jieying_mark'));
+                        },
+                    },
+                },
+            };
+
+            // 添加全局技能初始化步骤
+            lib.arenaReady.push(function () {
+                game.addGlobalSkill('_aiSelectCharacter');
+            });
+
+        },
+        precontent: function () {
+            // 扩展加载前执行的逻辑
+        },
+        config: {
+            // 配置选项
+        },
+        package: {
+            intro: "优化一些AI的操作，比如神甘宁劫营逻辑，界徐盛出牌排顺序等等。",
+            author: "不知谁惜花",
+            version: "1.0"
+        }
+    };
+});
